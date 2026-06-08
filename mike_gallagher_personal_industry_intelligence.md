@@ -1095,3 +1095,1531 @@ Use:
 - vector search later
 
 This gives a clean foundation without over-structuring the knowledge base too early.
+
+
+---
+
+# Appendix A — Tooling Layout, Selection Rationale, and MCP Roles
+
+This appendix clarifies how the major tools fit together and which parts should be custom-built versus reused.
+
+The main design principle is:
+
+> The Endur KB folder, metadata, and index should be the source of truth. Chat applications should be clients of the KB, not the owner of the KB.
+
+## A.1 Architecture Summary
+
+Recommended long-term layout:
+
+```text
+D:\Knowledge\Endur-KB\
+  source files
+  YAML metadata sidecars
+  extracted text
+  SQLite / FTS index
+  optional vector index
+        ↓
+endur-kb-mcp-server
+        ↓
+MCP-capable client / chat front end
+        ↓
+LLM provider or local model
+```
+
+The recommended core architecture is:
+
+```text
+Endur KB folder + metadata + index
+        ↓
+Custom Endur KB MCP Server
+        ↓
+LibreChat, Claude Desktop, Cursor, Codex-compatible client, or another MCP client
+```
+
+Optional companion tools:
+
+```text
+Obsidian / VS Code
+  for editing Markdown notes
+
+AnythingLLM or Open WebUI
+  for quick document-chat experiments
+
+LlamaIndex
+  for more advanced retrieval later
+
+Docker Desktop
+  for running self-hosted chat front ends such as LibreChat or Open WebUI
+```
+
+## A.2 MCP Terminology
+
+MCP has two sides that must not be confused.
+
+### MCP Server
+
+The MCP server exposes data or capabilities.
+
+For this project, the custom MCP server should expose the Endur KB through tools such as:
+
+```text
+kb_search(query, profile)
+kb_read(document_id)
+kb_get_metadata(document_id)
+kb_list_documents(filters)
+kb_recent()
+kb_review_queue()
+```
+
+The MCP server should sit directly on top of:
+
+```text
+D:\Knowledge\Endur-KB\
+  01_Source-Docs\
+  02_My-Notes\
+  03_Extracted\
+  04_Index\
+```
+
+The MCP server is where the KB rules are enforced:
+
+- default search
+- private reference search
+- external-output-safe search
+- author filters
+- source-category filters
+- exclusion rules
+- citation rules
+
+### MCP Client
+
+The MCP client is the app that connects to the MCP server.
+
+Examples:
+
+```text
+LibreChat
+AnythingLLM
+Claude Desktop
+Cursor
+other MCP-capable AI clients
+```
+
+The MCP client does not own the knowledge base. It asks the MCP server to search or retrieve information.
+
+### Practical meaning
+
+When this document says **“build the MCP server,”** it means:
+
+```text
+Build endur-kb-mcp-server over D:\Knowledge\Endur-KB
+```
+
+When this document says **“use LibreChat or AnythingLLM with MCP,”** it means:
+
+```text
+LibreChat or AnythingLLM acts as the MCP client that calls endur-kb-mcp-server
+```
+
+## A.3 Component Responsibility Table
+
+| Component | Role | MCP Role | Source of Truth? | Build or Install? |
+|---|---|---:|---:|---|
+| `D:\Knowledge\Endur-KB` | Document vault | None | Yes | Create manually |
+| YAML sidecars | Metadata and policy | None | Yes | Build light tooling |
+| SQLite / FTS5 | Local metadata and keyword index | None | Yes | Build light tooling |
+| Optional vector index | Semantic retrieval | None | Partial | Add later |
+| `endur-kb-mcp-server` | Controlled access layer | Server | No, but enforces access | Build |
+| LibreChat | Chat UI / agent workbench | Client | No | Install later |
+| AnythingLLM | Document-chat/RAG app | Client or standalone app | No | Optional |
+| Open WebUI | Local chat/RAG UI | Client/tool platform, depending setup | No | Optional |
+| Obsidian | Notes editor | None | No | Optional |
+| VS Code | Editing/building | None | No | Install/use |
+| LlamaIndex | RAG framework | None directly | No | Add later |
+| LangChain/LangGraph | Agent/RAG framework | None directly | No | Optional later |
+
+## A.4 Recommended Tool Choices
+
+### A.4.1 Custom Endur KB MCP Server
+
+#### Purpose
+
+This is the central integration layer for the KB.
+
+It should expose the KB to AI tools without giving those tools uncontrolled access to the file system.
+
+#### Why it is recommended
+
+The KB has specific rules that generic document-chat tools usually do not enforce well:
+
+- vendor-authored documents may be private-reference only
+- customer/partner-provided documents may be excluded from default search
+- unknown-source documents may need review before indexing
+- external-output-safe searches should only use approved material
+- every document should have author/source metadata when known
+- citations should include document title, filename, source category, and page/section where possible
+
+These rules are specific to this project. They belong in a custom layer.
+
+#### Strengths
+
+- Gives precise control over search profiles.
+- Keeps the KB independent of any one chat application.
+- Lets multiple AI clients use the same KB.
+- Preserves the folder and metadata design as the source of truth.
+- Can be audited and tested.
+- Allows clear separation between private reference and external-safe content.
+- Can start simple with keyword search and add vector retrieval later.
+
+#### Weaknesses
+
+- Requires some development.
+- Needs maintenance.
+- Must be secured carefully if exposed remotely.
+- Initial versions may be less polished than ready-made document-chat apps.
+- MCP client support varies across tools.
+
+#### Initial MCP tools to expose
+
+```text
+kb_search(query, profile="default", filters={})
+kb_read(document_id, max_chars=None)
+kb_get_metadata(document_id)
+kb_list_documents(filters={})
+kb_recent(limit=20)
+kb_review_queue()
+kb_explain_policy(document_id)
+```
+
+#### Future MCP tools
+
+```text
+kb_compare(document_id_a, document_id_b)
+kb_summarize(document_id, profile="default")
+kb_find_duplicates()
+kb_reindex()
+kb_classify_pending()
+```
+
+#### Design rule
+
+The MCP server should not decide that a document is safe just because it exists. It should always obey metadata.
+
+### A.4.2 LibreChat
+
+#### Purpose
+
+LibreChat is a self-hosted chat UI and AI workbench. It can act as an MCP client by connecting to configured MCP servers.
+
+#### How it fits
+
+Recommended role:
+
+```text
+LibreChat = front-end chat UI / MCP client
+```
+
+It should call:
+
+```text
+endur-kb-mcp-server
+```
+
+It should not own the Endur KB.
+
+#### Why it is a strong candidate
+
+LibreChat is useful if the goal is a ChatGPT-like local or self-hosted interface that can connect to models and MCP servers. LibreChat documentation describes configuring MCP servers in `librechat.yaml`, and using MCP servers either in chat or with agents.
+
+#### Strengths
+
+- Good fit for MCP-client use.
+- ChatGPT-like interface.
+- Supports multiple model providers.
+- Supports agents and custom configuration.
+- Better aligned with “use my MCP server” than pure document-chat tools.
+- Can become the main UI after the KB MCP server works.
+
+#### Weaknesses
+
+- More installation complexity than a desktop app.
+- Usually requires Docker or a self-hosted deployment.
+- Configuration can be more involved.
+- Not the simplest first POC.
+- It is a client/front end, not the KB engine itself.
+- Still depends on quality of the MCP server and retrieval layer.
+
+#### When to install
+
+Install LibreChat after:
+
+1. The folder structure exists.
+2. Metadata sidecars exist for a few documents.
+3. The first simple local search works.
+4. The MCP server exposes at least `kb_search` and `kb_read`.
+
+LibreChat is not needed for the first file-ingestion POC.
+
+### A.4.3 AnythingLLM
+
+#### Purpose
+
+AnythingLLM is a document-chat/RAG app. It is useful for quick experimentation with document Q&A.
+
+#### How it fits
+
+Recommended role:
+
+```text
+AnythingLLM = optional RAG/document-chat test bench
+```
+
+Possible uses:
+
+- quickly chat with exported document folders
+- validate whether a set of documents is useful
+- compare retrieval results against the custom KB search
+- prototype questions before investing in custom code
+
+#### Important MCP clarification
+
+AnythingLLM can act as an MCP client/host for MCP tools. Current documentation indicates AnythingLLM Desktop supports MCP Tools loading via MCP servers, but not MCP Resources, Prompts, or Sampling. That means it can call tools from the Endur KB MCP server, but it should not be treated as the full MCP platform for this KB.
+
+#### Strengths
+
+- Fastest route to basic “chat with documents.”
+- Friendly UI.
+- Useful for testing RAG behavior.
+- Can use workspaces.
+- Can help validate document usefulness before the custom MCP server is complete.
+- Lower friction than building a full chat UI.
+
+#### Weaknesses
+
+- Not ideal as the source of truth for this KB.
+- Its internal document indexing may not enforce the exact policy model required here.
+- It may blur default/private/external-safe boundaries unless carefully separated.
+- MCP support is useful but narrower than the full MCP concept.
+- It can create a second copy/index of the KB, which may confuse governance if treated as authoritative.
+- Less suitable than a custom MCP server for fine-grained metadata enforcement.
+
+#### When to install
+
+Optional early install if the goal is to test document Q&A quickly.
+
+Use it with export folders, not the raw KB:
+
+```text
+D:\Knowledge\Endur-KB\06_Exports\default-search
+D:\Knowledge\Endur-KB\06_Exports\private-reference
+D:\Knowledge\Endur-KB\06_Exports\external-safe
+```
+
+Do not point it at the full KB until the metadata and policy model is mature.
+
+### A.4.4 Open WebUI
+
+#### Purpose
+
+Open WebUI is a self-hosted AI interface with knowledge/RAG features and local-model orientation.
+
+#### How it fits
+
+Recommended role:
+
+```text
+Open WebUI = optional alternative chat/RAG front end
+```
+
+It may be useful if the project moves toward local models or a self-hosted AI interface.
+
+#### Strengths
+
+- Strong local/self-hosted AI community.
+- Knowledge/RAG features.
+- Local model support.
+- Useful for testing local LLM workflows.
+- Good if the objective includes non-cloud model experimentation.
+
+#### Weaknesses
+
+- Not the source-of-truth KB.
+- RAG behavior and document management may not map cleanly to this project’s policy profiles.
+- May require Docker and more operational setup.
+- MCP/client fit may require more validation depending on the desired workflow.
+- Could be redundant if LibreChat is already selected as the main UI.
+
+#### When to install
+
+Evaluate after LibreChat or instead of LibreChat if local-model workflows become more important than MCP-agent workflows.
+
+### A.4.5 Obsidian
+
+#### Purpose
+
+Obsidian is a local Markdown note-taking app.
+
+#### How it fits
+
+Recommended role:
+
+```text
+Obsidian = optional editor for 02_My-Notes
+```
+
+#### Strengths
+
+- Excellent for Markdown notes.
+- Local-first.
+- Easy linking between notes.
+- Good for building a durable personal knowledge layer.
+- Works well with Git if desired.
+- Your own notes are the safest material for future external-facing use.
+
+#### Weaknesses
+
+- Not a RAG system.
+- Not an MCP server.
+- Not a document ingestion pipeline.
+- Attachments and PDFs can become messy without discipline.
+- Plugin ecosystem can create complexity.
+
+#### When to install
+
+Install early if you want a good environment for writing notes. Otherwise, VS Code is enough.
+
+### A.4.6 VS Code
+
+#### Purpose
+
+VS Code is a practical editor for Markdown, YAML, Python, and project files.
+
+#### How it fits
+
+Recommended role:
+
+```text
+VS Code = build and maintenance environment
+```
+
+#### Strengths
+
+- Good for editing Markdown and YAML.
+- Good for Python development.
+- Useful with Codex-style tools.
+- Good diffing and Git integration.
+- Lightweight enough for the first build.
+
+#### Weaknesses
+
+- Not a KB app by itself.
+- Not a RAG system.
+- Not an MCP client unless paired with extensions/tools that support MCP.
+
+#### When to install
+
+Use from the beginning.
+
+### A.4.7 LlamaIndex
+
+#### Purpose
+
+LlamaIndex is a developer framework for building retrieval and RAG systems over private data.
+
+#### How it fits
+
+Recommended role:
+
+```text
+LlamaIndex = optional advanced retrieval framework later
+```
+
+For the first POC, SQLite FTS5 is enough. LlamaIndex becomes useful when the KB needs:
+
+- semantic retrieval
+- better chunking
+- document nodes
+- metadata-aware retrieval
+- hybrid retrieval
+- query routing
+- source-aware summarization
+
+#### Strengths
+
+- Strong fit for custom RAG.
+- Good abstraction for documents, nodes, indexes, retrievers, and query engines.
+- Easier than building advanced RAG from scratch.
+- Can preserve metadata filters if designed properly.
+
+#### Weaknesses
+
+- Adds framework complexity.
+- Can hide important retrieval behavior.
+- May be overkill for a small initial KB.
+- Requires careful configuration to maintain policy boundaries.
+- Version changes can affect implementation details.
+
+#### When to install
+
+Do not install for the first POC unless needed. Add after keyword search works and you have enough documents to justify semantic retrieval.
+
+### A.4.8 LangChain / LangGraph
+
+#### Purpose
+
+LangChain and LangGraph are frameworks for building agentic workflows and more complex retrieval/application logic.
+
+#### How they fit
+
+Recommended role:
+
+```text
+LangChain/LangGraph = optional later, only if workflow complexity grows
+```
+
+#### Strengths
+
+- Good for complex multi-step workflows.
+- Strong ecosystem.
+- Useful for tool orchestration.
+- LangGraph can model stateful workflows.
+
+#### Weaknesses
+
+- More complexity than needed at the start.
+- Easy to overbuild.
+- Not necessary for basic ingestion, metadata, search, or MCP exposure.
+- May distract from document hygiene and policy controls.
+
+#### When to install
+
+Only after the KB, search profiles, and MCP server are working and there is a clear need for complex workflows.
+
+### A.4.9 SQLite / FTS5
+
+#### Purpose
+
+SQLite stores document metadata and provides local keyword search through FTS5.
+
+#### How it fits
+
+Recommended role:
+
+```text
+SQLite = first metadata and keyword search engine
+```
+
+#### Strengths
+
+- Simple.
+- Local.
+- Easy to back up.
+- Easy to inspect.
+- Good for metadata filters.
+- FTS5 supports exact keyword search.
+- No separate server required.
+- Perfect for a first POC.
+
+#### Weaknesses
+
+- Not semantic search by itself.
+- Full-text ranking is basic compared to dedicated search engines.
+- May need careful tuning for larger collections.
+- Does not handle embeddings unless extended with another tool.
+
+#### When to install
+
+Use immediately in the first prototype.
+
+### A.4.10 Vector Store
+
+#### Purpose
+
+A vector store enables semantic search.
+
+Possible options:
+
+```text
+Chroma
+LanceDB
+Qdrant
+SQLite vector extension
+```
+
+#### How it fits
+
+Recommended role:
+
+```text
+Vector store = second-stage enhancement
+```
+
+#### Strengths
+
+- Finds conceptual matches.
+- Helps with broad questions and synonyms.
+- Useful once the KB grows.
+- Can be combined with metadata filters.
+
+#### Weaknesses
+
+- Adds complexity.
+- Requires embeddings.
+- Can retrieve plausible but wrong chunks if metadata filters are weak.
+- Not enough by itself for legal/policy/source-sensitive search.
+- Exact terms like Endur, Findur, Openlink, ION, module names, guide titles, and dates still need keyword search.
+
+#### When to install
+
+After:
+
+1. There are enough documents to justify semantic search.
+2. Metadata filters are working.
+3. Keyword search is working.
+4. Search profile enforcement is tested.
+
+## A.5 Tooling Recommendation by Phase
+
+| Phase | Install/Use | Avoid |
+|---|---|---|
+| POC 0 | File folders, VS Code | Anything complex |
+| POC 1 | Python, PyYAML, SQLite FTS5, PDF/DOCX extractors | Vector DB |
+| POC 2 | MCP Python SDK / FastMCP-style server | Full RAG framework |
+| POC 3 | LibreChat as MCP client | Making LibreChat the KB |
+| Optional validation | AnythingLLM | Treating AnythingLLM as authoritative |
+| Advanced retrieval | LlamaIndex + vector store | Replacing metadata rules with embeddings |
+| Remote access | Tailscale/VPN/reverse proxy later | Public exposure before auth/security |
+
+## A.6 Recommended Final Tool Positioning
+
+### Primary architecture
+
+```text
+Folder vault + metadata + SQLite
+        ↓
+Custom Endur KB MCP Server
+        ↓
+LibreChat or another MCP client
+```
+
+### Optional validation path
+
+```text
+Export folder
+        ↓
+AnythingLLM workspace
+        ↓
+Compare answers against MCP search
+```
+
+### Optional future advanced retrieval
+
+```text
+Extracted text + metadata
+        ↓
+LlamaIndex + vector store
+        ↓
+MCP server retrieval backend
+```
+
+---
+
+# Appendix B — Enhanced Folder and Metadata Layout
+
+This section enhances the earlier folder and metadata design while keeping the structure simple.
+
+## B.1 Recommended Folder Layout
+
+Use this as the starting point:
+
+```text
+D:\Knowledge\Endur-KB\
+  00_Inbox\
+  01_Source-Docs\
+    Public\
+    Vendor-Authored\
+    Customer-Partner-Provided\
+    Unknown-Needs-Review\
+  02_My-Notes\
+  03_Extracted\
+  04_Index\
+  05_Reports\
+  06_Exports\
+    default-search\
+    private-reference\
+    external-safe\
+  07_Config\
+  08_Templates\
+  09_Logs\
+  99_Excluded\
+```
+
+## B.2 Folder Purpose
+
+### `00_Inbox`
+
+Unreviewed files. The ingestion process scans only this folder for new source documents.
+
+### `01_Source-Docs`
+
+Approved or partially approved source documents.
+
+Subfolders are intentionally shallow. Do not create a deep taxonomy yet.
+
+### `02_My-Notes`
+
+Your own analysis and notes. This is the safest long-term content for external use.
+
+### `03_Extracted`
+
+Generated extracted text/Markdown from source documents.
+
+Do not manually edit unless there is a correction workflow.
+
+### `04_Index`
+
+SQLite database, FTS index, vector index if added later, ingestion state.
+
+### `05_Reports`
+
+Generated Markdown reports:
+
+```text
+intake-review-YYYY-MM-DD.md
+classification-summary.md
+external-safe-inventory.md
+private-reference-inventory.md
+unknown-source-review.md
+```
+
+### `06_Exports`
+
+Generated export sets for external tools.
+
+This folder lets tools like AnythingLLM or Open WebUI test a subset of documents without touching the master KB.
+
+```text
+06_Exports\
+  default-search\
+  private-reference\
+  external-safe\
+```
+
+### `07_Config`
+
+Configuration files for the ingestion and search system.
+
+Examples:
+
+```text
+kb_config.yml
+classification_rules.yml
+search_profiles.yml
+mcp_server_config.yml
+```
+
+### `08_Templates`
+
+Templates for metadata and notes.
+
+Examples:
+
+```text
+metadata-template.yml
+endur-note-template.md
+product-guide-summary-template.md
+source-review-template.md
+```
+
+### `09_Logs`
+
+Operational logs from ingestion, classification, indexing, and MCP server runs.
+
+### `99_Excluded`
+
+Files retained but intentionally excluded from indexing.
+
+## B.3 Metadata Sidecar Naming
+
+Use same basename as the source file:
+
+```text
+endur-product-guide.pdf
+endur-product-guide.yml
+```
+
+For extracted text:
+
+```text
+03_Extracted\endur-product-guide.md
+```
+
+The YAML sidecar should reference both paths.
+
+## B.4 Enhanced Metadata Template
+
+```yaml
+schema_version: 1
+
+title:
+author:
+publisher:
+source_category:
+origin:
+confidentiality:
+usage_policy:
+
+default_search: exclude
+private_search: exclude
+external_output_allowed: false
+
+product:
+  - Endur
+
+topics: []
+
+document_type:
+language:
+date_received:
+date_published:
+document_version:
+
+source_path:
+sidecar_path:
+extracted_text_path:
+original_filename:
+file_extension:
+file_size_bytes:
+hash_sha256:
+
+ingestion:
+  status: needs_review
+  classification_confidence: low
+  review_required: true
+  reviewed_by:
+  reviewed_at:
+  review_notes:
+  last_indexed_at:
+
+policy:
+  allow_summary_for_private_use: true
+  allow_direct_quotes: false
+  allow_external_synthesis: false
+  allow_external_direct_quotes: false
+  require_citation: true
+
+provenance:
+  source_url:
+  received_from:
+  received_context:
+  public_availability_verified: false
+  public_availability_url:
+  public_availability_checked_at:
+
+extraction:
+  method:
+  page_count:
+  word_count:
+  extraction_quality: unknown
+  ocr_required: false
+
+notes:
+```
+
+## B.5 Search Profile Rules
+
+Store search profiles in:
+
+```text
+07_Config\search_profiles.yml
+```
+
+Example:
+
+```yaml
+profiles:
+  default:
+    description: Normal Q&A using safe approved sources.
+    include_when:
+      default_search: include
+    exclude_when:
+      usage_policy:
+        - do_not_index
+
+  private:
+    description: Private personal reference search.
+    include_when:
+      private_search: include
+    exclude_when:
+      usage_policy:
+        - do_not_index
+
+  external-safe:
+    description: Search allowed for externally shareable content generation.
+    include_when:
+      external_output_allowed: true
+    exclude_when:
+      external_output_allowed: false
+```
+
+## B.6 Classification Rules File
+
+Store classification rules in:
+
+```text
+07_Config\classification_rules.yml
+```
+
+Example:
+
+```yaml
+vendor_terms:
+  - Openlink
+  - OpenLink
+  - ION
+  - Endur
+  - Findur
+
+sensitive_terms:
+  - confidential
+  - proprietary
+  - internal use only
+  - customer confidential
+  - NDA
+  - not for distribution
+  - restricted
+
+default_policies:
+  my_note:
+    default_search: include
+    private_search: include
+    external_output_allowed: true
+
+  public_vendor:
+    default_search: include
+    private_search: include
+    external_output_allowed: true
+
+  vendor_authored:
+    default_search: exclude
+    private_search: include
+    external_output_allowed: false
+
+  customer_partner_provided:
+    default_search: exclude
+    private_search: include
+    external_output_allowed: false
+
+  unknown:
+    default_search: exclude
+    private_search: exclude
+    external_output_allowed: false
+```
+
+## B.7 Search Result Citation Format
+
+Search results should return enough information for reliable answers:
+
+```yaml
+document_id:
+title:
+author:
+publisher:
+source_category:
+usage_policy:
+profile_used:
+filename:
+source_path:
+page_number:
+section_heading:
+chunk_text:
+```
+
+Future AI answers should cite:
+
+```text
+Title — author/publisher — filename — page/section if available — search profile used
+```
+
+---
+
+# Appendix C — Detailed Work Plan
+
+This plan moves from a very simple proof of concept to a more complete MCP-backed KB.
+
+## C.1 Phase 0 — Folder-Only POC
+
+### Goal
+
+Create the KB root and manually place a few test documents.
+
+### Install
+
+Required:
+
+- VS Code or another editor
+
+Optional:
+
+- Obsidian for Markdown notes
+
+### Steps
+
+1. Create the root folder:
+
+```powershell
+mkdir D:\Knowledge\Endur-KB
+```
+
+2. Create simple subfolders:
+
+```powershell
+mkdir D:\Knowledge\Endur-KB\00_Inbox
+mkdir D:\Knowledge\Endur-KB\01_Source-Docs
+mkdir D:\Knowledge\Endur-KB\02_My-Notes
+mkdir D:\Knowledge\Endur-KB\03_Extracted
+mkdir D:\Knowledge\Endur-KB\04_Index
+mkdir D:\Knowledge\Endur-KB\05_Reports
+mkdir D:\Knowledge\Endur-KB\06_Exports
+mkdir D:\Knowledge\Endur-KB\07_Config
+mkdir D:\Knowledge\Endur-KB\08_Templates
+mkdir D:\Knowledge\Endur-KB\09_Logs
+mkdir D:\Knowledge\Endur-KB\99_Excluded
+```
+
+3. Add 5 to 10 test documents to `00_Inbox`.
+
+4. Create 2 to 3 personal Markdown notes in `02_My-Notes`.
+
+### Success criteria
+
+- Folder structure exists.
+- A few sample documents are in `00_Inbox`.
+- A few personal notes exist.
+- No indexing yet.
+
+## C.2 Phase 1 — Manual Metadata POC
+
+### Goal
+
+Create sidecar YAML manually for a small set of files.
+
+### Install
+
+Required:
+
+- VS Code
+- YAML extension for VS Code, optional
+
+### Steps
+
+1. Create:
+
+```text
+08_Templates\metadata-template.yml
+```
+
+2. Manually create `.yml` sidecars for 5 documents.
+
+3. Assign:
+
+```yaml
+source_category
+origin
+usage_policy
+default_search
+private_search
+external_output_allowed
+```
+
+4. Manually move documents from `00_Inbox` to:
+
+```text
+01_Source-Docs\Public
+01_Source-Docs\Vendor-Authored
+01_Source-Docs\Customer-Partner-Provided
+01_Source-Docs\Unknown-Needs-Review
+```
+
+### Success criteria
+
+- 5 documents have YAML sidecars.
+- At least one document is marked default-safe.
+- At least one document is marked private-only.
+- At least one document is marked excluded or needs review.
+
+## C.3 Phase 2 — Python Ingestion POC
+
+### Goal
+
+Use Codex to build a simple Python CLI that scans `00_Inbox`, computes hashes, extracts basic metadata, and creates draft YAML sidecars.
+
+### Install
+
+Required:
+
+- Python 3.11 or newer
+- VS Code
+- Git, optional but recommended
+
+Python packages:
+
+```text
+pyyaml
+python-docx
+pypdf
+pymupdf
+typer
+rich
+```
+
+Optional:
+
+```text
+pytest
+```
+
+### Steps
+
+1. Ask Codex to create a Python project:
+
+```text
+endur_kb/
+  kb/
+    cli.py
+    ingest.py
+    classify.py
+    extract.py
+    metadata.py
+    database.py
+    reports.py
+```
+
+2. Implement:
+
+```text
+python -m kb.cli init --root "D:\Knowledge\Endur-KB"
+python -m kb.cli scan
+python -m kb.cli classify
+python -m kb.cli review-report
+```
+
+3. For each inbox document, generate a draft YAML sidecar.
+
+4. Generate a Markdown report:
+
+```text
+05_Reports\intake-review-YYYY-MM-DD.md
+```
+
+### Success criteria
+
+- CLI scans `00_Inbox`.
+- CLI creates draft metadata.
+- CLI identifies likely vendor-authored documents.
+- CLI identifies confidentiality markers.
+- CLI creates a review report.
+- No document is indexed without approval.
+
+## C.4 Phase 3 — Approval and Extraction
+
+### Goal
+
+Add approval workflow and text extraction.
+
+### Install
+
+Same as Phase 2.
+
+### Steps
+
+1. Add command:
+
+```text
+python -m kb.cli approve --file "<path>"
+```
+
+2. Approved files move to the right source folder.
+
+3. Extracted text is written to:
+
+```text
+03_Extracted\
+```
+
+4. YAML sidecar is updated with:
+
+```yaml
+ingestion.status: approved
+extracted_text_path:
+hash_sha256:
+extraction.method:
+extraction.word_count:
+```
+
+### Success criteria
+
+- Approved documents are moved or copied out of `00_Inbox`.
+- Extracted text files are created.
+- Sidecar metadata references extracted text.
+- Unknown or sensitive files remain unapproved unless manually confirmed.
+
+## C.5 Phase 4 — SQLite Metadata and FTS5 Search
+
+### Goal
+
+Create a local searchable index using SQLite and FTS5.
+
+### Install
+
+Required:
+
+- Python SQLite support, included with Python
+- No separate database server required
+
+### Steps
+
+1. Create:
+
+```text
+04_Index\metadata.sqlite
+```
+
+2. Add tables:
+
+```text
+documents
+document_chunks
+document_chunks_fts
+```
+
+3. Chunk extracted text.
+
+4. Add command:
+
+```text
+python -m kb.cli index
+```
+
+5. Add search command:
+
+```text
+python -m kb.cli search "Endur configuration" --profile default
+python -m kb.cli search "Endur configuration" --profile private
+python -m kb.cli search "Endur configuration" --profile external-safe
+```
+
+### Success criteria
+
+- Search works locally.
+- Search profile filtering works.
+- Private-only documents do not appear in default search.
+- Private-only documents do not appear in external-safe search.
+- Search results include citation metadata.
+
+## C.6 Phase 5 — First MCP Server POC
+
+### Goal
+
+Expose the KB through an MCP server.
+
+### Install
+
+Required:
+
+- Python MCP SDK or a FastMCP-style Python framework
+
+### Steps
+
+1. Create project module:
+
+```text
+kb_mcp_server.py
+```
+
+2. Expose tools:
+
+```text
+kb_search
+kb_read
+kb_get_metadata
+kb_list_documents
+kb_recent
+kb_review_queue
+```
+
+3. Test locally with an MCP inspector or compatible client.
+
+4. Confirm that profile filters are enforced inside the MCP server.
+
+### Success criteria
+
+- MCP client can call `kb_search`.
+- MCP client can call `kb_read`.
+- `profile=default` excludes private-only documents.
+- `profile=external-safe` excludes vendor-authored private-only documents.
+- MCP server never returns excluded documents.
+
+## C.7 Phase 6 — LibreChat as MCP Client
+
+### Goal
+
+Connect a real chat UI to the Endur KB MCP server.
+
+### Install
+
+Required:
+
+- Docker Desktop
+- LibreChat
+
+### Steps
+
+1. Install LibreChat.
+2. Configure the Endur KB MCP server in `librechat.yaml`.
+3. Restart LibreChat.
+4. Test prompts:
+
+```text
+Search my Endur KB for configuration patterns using default search.
+Search my Endur KB for configuration patterns using private reference search.
+Find documents authored by Openlink but do not use them for external-safe output.
+```
+
+### Success criteria
+
+- LibreChat can call the KB MCP server.
+- Search results respect profiles.
+- Answers cite sources.
+- User can interact with the KB in a chat UI.
+
+## C.8 Phase 7 — Optional AnythingLLM Validation
+
+### Goal
+
+Use AnythingLLM as a comparison tool, not as the source of truth.
+
+### Install
+
+Required only if validating RAG behavior:
+
+- AnythingLLM Desktop or Docker version
+
+### Steps
+
+1. Generate export folders:
+
+```text
+06_Exports\default-search
+06_Exports\private-reference
+06_Exports\external-safe
+```
+
+2. Create separate AnythingLLM workspaces:
+
+```text
+Endur KB - Default
+Endur KB - Private Reference
+Endur KB - External Safe
+```
+
+3. Load only the appropriate export folder into each workspace.
+
+4. Ask the same questions in AnythingLLM and LibreChat/MCP.
+
+### Success criteria
+
+- AnythingLLM helps validate retrieval quality.
+- It does not become the authoritative KB.
+- It does not bypass metadata rules.
+
+## C.9 Phase 8 — Add Semantic / Vector Search
+
+### Goal
+
+Improve retrieval beyond keyword search.
+
+### Install
+
+Choose one:
+
+```text
+Chroma
+LanceDB
+Qdrant
+```
+
+Optional framework:
+
+```text
+LlamaIndex
+```
+
+### Steps
+
+1. Add embeddings for approved chunks.
+2. Store vector index under:
+
+```text
+04_Index\vector_index
+```
+
+3. Add hybrid search:
+
+```text
+keyword results + semantic results + metadata filters
+```
+
+4. Update MCP `kb_search` to support:
+
+```text
+search_mode: keyword | semantic | hybrid
+```
+
+### Success criteria
+
+- Hybrid search improves broad conceptual questions.
+- Metadata filters are applied before or during retrieval.
+- External-safe policy still works.
+- Exact keyword search remains available.
+
+## C.10 Phase 9 — Local Web Review UI
+
+### Goal
+
+Make review and classification easier.
+
+### Install
+
+Choose one:
+
+```text
+FastAPI + simple HTML
+Streamlit
+NiceGUI
+```
+
+### Steps
+
+1. Build a local review dashboard.
+2. Show pending files.
+3. Show extracted metadata.
+4. Allow approve/edit/exclude.
+5. Write YAML sidecars and update SQLite.
+
+### Success criteria
+
+- Review is easier than editing YAML manually.
+- Every document still has an auditable metadata file.
+- The UI does not replace the folder/metadata source of truth.
+
+## C.11 Phase 10 — Remote Access Later
+
+### Goal
+
+Access the KB remotely after local security and policy are proven.
+
+### Install
+
+Options:
+
+```text
+Tailscale
+WireGuard
+VPN
+reverse proxy with authentication
+```
+
+### Security rules
+
+- Do not expose the MCP server publicly without authentication.
+- Prefer VPN-only access.
+- Keep the MCP server read-only at first.
+- Log all remote access.
+- Do not expose `99_Excluded`.
+- Do not expose raw file system browsing.
+- Keep external-safe mode as the default for any remote or public-facing workflow unless explicitly overridden.
+
+### Success criteria
+
+- Remote access works only over a trusted path.
+- Search profiles still apply.
+- Private-reference mode is protected.
+- Logs are available.
+
+---
+
+# Appendix D — Recommended Build Sequence
+
+## D.1 Minimal recommended path
+
+```text
+1. Create folder structure.
+2. Create manual YAML metadata for 5 documents.
+3. Build Python scanner/classifier.
+4. Build extraction.
+5. Build SQLite FTS5 search.
+6. Build MCP server.
+7. Connect LibreChat.
+8. Optionally validate with AnythingLLM.
+9. Add vector search.
+10. Add remote access later.
+```
+
+## D.2 What not to do first
+
+Do not start with:
+
+- deep folder taxonomy
+- vector database first
+- remote access first
+- public web server
+- broad disk crawler
+- fully automatic classification
+- putting everything directly into AnythingLLM
+- treating any chat app as the source of truth
+
+## D.3 First practical POC target
+
+The first real success target should be:
+
+```text
+I can place five Endur-related documents into 00_Inbox,
+run a local command,
+review suggested metadata,
+approve two documents,
+index them,
+search them with profile filters,
+and get cited results.
+```
+
+That is enough to prove the architecture before installing heavier tools.
+
+---
+
+# Appendix E — External Assumptions to Validate
+
+The tool landscape changes quickly. Validate these assumptions before implementation.
+
+## E.1 Assumptions to validate
+
+1. LibreChat continues to support MCP server configuration through `librechat.yaml`.
+2. LibreChat can use MCP servers in the chat area or through agents.
+3. AnythingLLM continues to support MCP tool loading from MCP servers.
+4. AnythingLLM's MCP support may be limited to Tools, not full Resources/Prompts/Sampling.
+5. Open WebUI continues to support knowledge/RAG workflows.
+6. The selected MCP Python SDK or FastMCP-style library is stable enough for local use.
+7. The selected MCP client can pass profile/filter arguments reliably to the MCP server.
+8. The selected vector store supports metadata filters well enough for search profiles.
+9. The chosen deployment model does not require exposing the KB outside the local machine.
+
+## E.2 Validation notes
+
+As of the research performed for this document update:
+
+- The MCP project describes servers as a way to expose tools, resources, and prompts to clients.
+- LibreChat documentation describes MCP servers being configured in `librechat.yaml` and used in chat or with agents.
+- AnythingLLM documentation states that Desktop supports MCP Tools loading from MCP servers, but not Resources, Prompts, or Sampling.
+- Open WebUI documentation describes knowledge/RAG features for uploaded files and knowledge bases.
+
+These facts should be rechecked before installation because these tools are evolving quickly.
